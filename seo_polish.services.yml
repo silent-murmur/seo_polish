@@ -1,0 +1,9 @@
+services:
+  seo_polish.page_null_redirect:
+    class: Drupal\seo_polish\EventSubscriber\PageNullRedirect
+    arguments: []
+    tags:
+      - { name: event_subscriber }
+  seo_polish.seo_polish_service:
+    class: Drupal\seo_polish\Services\SeoPolishService
+    arguments: ['@plugin.manager.condition', '@current_route_match', '@current_user']

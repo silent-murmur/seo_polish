@@ -1,0 +1,4 @@
+set up settings:
+  title: 'Set up Seo-Polish settings'
+  description: 'Users with this can define the credentials for the seo polish module.'
+  restrict access: true

@@ -1,0 +1,14 @@
+{
+  "name": "drupal/seo_polish",
+  "type": "drupal-module",
+  "description": "SEO tweaks.",
+  "keywords": ["Drupal"],
+  "license": "GPL-2.0+",
+  "homepage": "https://www.drupal.org/project/seo_polish",
+  "minimum-stability": "dev",
+  "support": {
+    "issues": "https://www.drupal.org/project/issues/seo_polish",
+    "source": "http://cgit.drupalcode.org/seo_polish"
+  },
+  "require": { }
+}

@@ -1,0 +1,277 @@
+<?php
+
+/**
+ * @file
+ * Contains seo_polish.module.
+ */
+
+use Drupal\Core\Routing\RouteMatchInterface;
+use Drupal\Core\Url;
+
+/**
+ * Implements hook_help().
+ */
+function seo_polish_help($route_name, RouteMatchInterface $route_match) {
+  switch ($route_name) {
+    // Main module help for the seo_polish module.
+    case 'help.page.seo_polish':
+      $output = '';
+      $output .= '<h3>' . t('About') . '</h3>';
+      $output .= '<p>' . t('SEO tweaks.') . '</p>';
+      return $output;
+
+    default:
+  }
+}
+
+/**
+ * Implements hook_page_attachments().
+ *
+ * @param array $attachments
+ *   The attachments array.
+ */
+function seo_polish_page_attachments(array &$attachments) {
+  // Load service for the settings.
+  $service = \Drupal::service('seo_polish.seo_polish_service');
+
+  // If prev and next rel links are needed.
+  if ($service->getConfiguration()['prev_and_next']) {
+    $query = \Drupal::request()->query->get('page');
+    if ($query !== NULL) {
+      // Rel Prev and Next into the html head.
+      $attachments = _seo_polish_prev_and_next($attachments);
+    }
+  }
+
+  // Add noindex status if configured.
+  if ($service->checkCondition()) {
+    $attachments = _seo_polish_add_status($attachments, 'noindex');
+  }
+}
+
+/**
+ * Implements hook_page_attachments_alter().
+ */
+function seo_polish_page_attachments_alter(array &$attachments) {
+  // Load service for the settings.
+  $service = \Drupal::service('seo_polish.seo_polish_service');
+
+  // Remove the hreflang.
+  if ($service->getConfiguration()['remove_hreflang']) {
+    if (array_key_exists('html_head_link', $attachments['#attached'])) {
+      for ($i = 0; $i < count($attachments['#attached']['html_head_link']); $i++) {
+        if (array_key_exists('hreflang', $attachments['#attached']['html_head_link'][$i][0])) {
+          unset ($attachments['#attached']['html_head_link'][$i]);
+        }
+      }
+    }
+  }
+
+  // Remove the canonical on 404 pages.
+  if ($service->getConfiguration()['remove_canonical_from_404']) {
+    $route_name = \Drupal::request()->attributes->get('_route');
+    if ('system.404' === $route_name) {
+      for ($i = 0; $i < count($attachments['#attached']['html_head']); $i++) {
+        if (in_array('canonical_url', $attachments['#attached']['html_head'][$i])) {
+          unset ($attachments['#attached']['html_head'][$i]);
+        }
+      }
+    }
+  }
+
+  // Remove the canonical on noindexed pages.
+  if ($service->getConfiguration()['remove_canonical_from_noindex']) {
+    for ($i = 0; $i < count($attachments['#attached']['html_head']); $i++) {
+      if (isset($attachments["#attached"]["html_head"][$i])) {
+        if (in_array('robots', $attachments['#attached']['html_head'][$i])) {
+          // Check if a noindex status exists.
+          if ($attachments["#attached"]["html_head"][$i][0]["#attributes"]["content"] == 'noindex') {
+            // Search for the canonical and remove it.
+            for ($k = 0; $k < count($attachments['#attached']['html_head']); $k++) {
+              if (in_array('canonical_url', $attachments['#attached']['html_head'][$k])) {
+                unset ($attachments['#attached']['html_head'][$k]);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Remove the http header canonical at all.
+  if ($service->getConfiguration()['remove_http_canonical']) {
+    if (isset($attachments['#attached']['http_header'])) {
+      foreach ($attachments['#attached']['http_header'] as $key => $value) {
+        if (in_array('Link', $value)) {
+          unset($attachments['#attached']['http_header'][$key]);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * Use this hook to run my hook implementations at last.
+ *
+ * Implements hook_module_implements_alter().
+ *
+ * @param $implementations
+ *   Implementations weight array from drupal.
+ *
+ * @param $hook
+ *   Name of the current hook.
+ */
+function seo_polish_module_implements_alter(&$implementations, $hook) {
+  if ($hook == 'page_attachments_alter') {
+    $group = $implementations['seo_polish'];
+    unset($implementations['seo_polish']);
+    $implementations['seo_polish'] = $group;
+  }
+}
+
+/**
+ * Alter the meta tags for pages that are not of content entities.
+ *
+ * @param array $metatags
+ *   The special meta tags to be added to the page.
+ * @param array $context
+ *   The context for the current meta tags being generated. Will contain the
+ *   following:
+ *   'entity' - The entity being processed; passed by reference.
+ */
+function seo_polish_metatags_alter(array &$metatags, array &$context) {
+  $query = \Drupal::request()->query->get('page');
+  global $base_secure_url;
+  if ($query !== NULL) {
+    $current_path = Url::fromRoute('<current>');
+    $path = $current_path->toString();
+    $metatags["canonical_url"] = $base_secure_url . $path . '?page=' . $query;
+  }
+}
+
+/**
+ * Force canonical tokens to use https (based on $base_secure_url).
+ *
+ * Implements hook_tokens_alter().
+ */
+function seo_polish_tokens_alter(array &$replacements, array $context, \Drupal\Core\Render\BubbleableMetadata $bubbleable_metadata) {
+  // Replace the [node:url]-Token and the [current-page:url]-Token, that is used to generate the canonical.
+  $current_uri = \Drupal::request()->getRequestUri();
+  global $base_secure_url;
+  if (isset($context['tokens']['url'])) {
+    $replacements['[node:url]'] = $base_secure_url . $current_uri;
+    $replacements['[current-page:url]'] = $base_secure_url . $current_uri;
+  }
+}
+
+/**
+ * Adds a noindex meta tag to the given attachments.
+ *
+ * @param array $attachments
+ *   Attachment of the current page.
+ * @param string $status
+ *   Status to be set.
+ *
+ * @return mixed
+ *   Attachments with the noindex meta tag.
+ */
+function _seo_polish_add_status(array $attachments, $status) {
+  $newTag = [
+    '#tag' => 'meta',
+    '#attributes' => [
+      'name' => 'robots',
+      'content' => $status,
+    ],
+  ];
+  $attachments['#attached']['html_head'][] = [
+    $newTag, 'robots:' . _seo_polish_random_seed(10),
+  ];
+
+  return $attachments;
+}
+
+/**
+ * Inserts prev and next rel link tags into the html head.
+ *
+ * @param $attachments
+ *   Attachments from the page_attachments hook.
+ *
+ * @return mixed
+ *   Altered attachments.
+ */
+function _seo_polish_prev_and_next($attachments) {
+  global $base_secure_url;
+  global $pager_total, $pager_page_array;
+  $current_path = Url::fromRoute('<current>');
+  $path = $current_path->toString();
+  if ($path == '<front>') {
+    $path = '/';
+  }
+  // Add the base url.
+  $path = $base_secure_url . $path;
+  if ($pager_page_array[0] == 1) {
+    $prev = '';
+  }
+  else {
+    $prev = '?page=' . $page = $pager_page_array[0] - 1;
+  }
+  if ($pager_page_array[0] == 0) {
+    $attachments['#attached']['html_head_link'][] = [[
+      'rel' => 'next',
+      'href' => $path . '?page=' . $next = $pager_page_array[0]+1,
+    ], 'rel_next_first'];
+  }
+  if ($pager_page_array[0] != 0 && $pager_page_array[0]+1 != $pager_total[0]) {
+    $attachments['#attached']['html_head_link'][] = [[
+      'rel' => 'next',
+      'href' => $path . '?page=' . $next = $pager_page_array[0]+1,
+    ], 'rel_next'];
+    $attachments['#attached']['html_head_link'][] = [[
+      'rel' => 'prev',
+      'href' => $path . $prev,
+    ], 'rel_prev'];
+  }
+  if ($pager_page_array[0]+1 == $pager_total[0]) {
+    $attachments['#attached']['html_head_link'][] = [[
+      'rel' => 'prev',
+      'href' => $path . $prev,
+    ], 'rel_prev_last'];
+  }
+
+  return $attachments;
+}
+
+/**
+ * Implements hook_preprocess_pager().
+ *
+ * @param array $vars
+ *   Template variables array.
+ */
+function seo_polish_preprocess_pager(&$vars) {
+  $path =  \Drupal::service('path.current')->getPath(); 
+  $alias = \Drupal::service('path.alias_manager')->getAliasByPath($path);
+  $page = \Drupal::request()->query->get('page');
+  // Always reset first pager item.
+  $vars['items']['pages'][1]['href'] = $alias;
+  // Reset previouse href if on the seconde page (page = 1).
+  if (isset($vars['items']['previous']) && $page === "1") {
+    $vars['items']['previous']['href'] = $alias;
+  }
+  // Always reset first href.
+  if (isset($vars['items']['first'])) {
+    $vars['items']['first']['href'] = $alias;
+  }
+}
+
+/**
+ * Helper function to generate a random seed.
+ *
+ * @param $length
+ *  Length of the string.
+ *
+ * @return string
+ *   The random string.
+ */
+function _seo_polish_random_seed($length) {
+  return substr(str_shuffle(str_repeat($x='0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ', ceil($length/strlen($x)) )),1,$length);
+}

@@ -1,0 +1,9 @@
+seo_polish.settings_form:
+  path: '/admin/config/seo_polish/settings'
+  defaults:
+    _form: '\Drupal\seo_polish\Form\SettingsForm'
+    _title: 'Seo Polish - Set up your settings.'
+  requirements:
+    _permission: 'set up settings'
+  options:
+    _admin_route: TRUE
